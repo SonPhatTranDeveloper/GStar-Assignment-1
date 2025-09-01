@@ -35,7 +35,7 @@ def weighted_row_sum_kernel(
     for col_block_start in range(0, tl.cdiv(N_COLS, BLOCK_SIZE)):
         # - Calculate the offsets for the current block of columns.
         #   Hint: Start from the block's beginning and add tl.arange(0, BLOCK_SIZE).
-        col_offsets = col_block_start + tl.arange(0, BLOCK_SIZE)
+        col_offsets = col_block_start * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
         
         # - Create a mask to prevent out-of-bounds memory access for the last block.
         #   Hint: Compare col_offsets with N_COLS.
