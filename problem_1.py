@@ -57,16 +57,39 @@ class FlashAttention2Function(torch.autograd.Function):
                         
                         # --- STUDENT IMPLEMENTATION REQUIRED HERE ---
                         # 1. Apply causal masking if is_causal is True.
-                        #
+                        if is_causal:
+                            # Create causal mask with size (tile_size, tile_size)
+                            inverted_causal_mask = torch.triu(torch.ones(S_ij.shape[0], S_ij.shape[1]), diagonal=1).bool()
+
+                            # Apply the mask
+                            S_ij = S_ij.masked_fill(inverted_causal_mask, -float('inf'))
+                        
                         # 2. Compute the new running maximum
-                        #
+                        # Compute the current row max
+                        m_new = S_ij.max(dim=-1).values
+
+                        # Update the running max
+                        m_i_new = torch.maximum(m_i, m_new)
+
                         # 3. Rescale the previous accumulators (o_i, l_i)
-                        #
+                        # Compute the scale factor
+                        scale_factor = torch.exp(m_i - m_i_new)
+
+                        # Update l_i and o_i
+                        l_i_new = scale_factor * l_i
+                        o_i_new = scale_factor @ o_i
+                        
                         # 4. Compute the probabilities for the current tile, P_tilde_ij = exp(S_ij - m_new).
-                        #
+                        P_tilde_ij = torch.exp(S_ij - m_i_new.reshape(-1, 1))
+
                         # 5. Accumulate the current tile's contribution to the accumulators to update l_i and o_i
-                        #
+                        # Update l_i and o_i
+                        l_i = l_i_new + P_tilde_ij.sum(dim=-1)
+                        o_i = o_i_new + (P_tilde_ij @ V_tile)
+
                         # 6. Update the running max for the next iteration
+                        # Update m_i
+                        m_i = m_i_new
                         
                         # --- END OF STUDENT IMPLEMENTATION ---
 
