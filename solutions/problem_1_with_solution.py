@@ -85,7 +85,7 @@ class FlashAttention2Function(torch.autograd.Function):
 
                         # 3. Rescale the previous accumulators (o_i, l_i)
                         # Compute the scale factor
-                        scale_factor = torch.exp(m_i - m_i_new)
+                        scale_factor = torch.exp(m_i - m_i_new, dtype=Q.dtype)
 
                         # Update l_i and o_i
                         l_i_new = scale_factor * l_i
