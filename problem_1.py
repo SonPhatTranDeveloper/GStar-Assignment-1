@@ -58,29 +58,35 @@ class FlashAttention2Function(torch.autograd.Function):
                         # --- STUDENT IMPLEMENTATION REQUIRED HERE ---
                         # 1. Apply causal masking if is_causal is True.
                         if is_causal:
-                            # Create causal mask with size (tile_size, tile_size)
-                            inverted_causal_mask = torch.triu(torch.ones(S_ij.shape[0], S_ij.shape[1]), diagonal=1).bool()
-
+                            # Create causal mask based on global positions
+                            # Query positions: [q_start, q_end)
+                            # Key positions: [k_start, k_end)
+                            q_indices = torch.arange(q_start, q_end, device=Q.device).unsqueeze(1)  # Shape: (q_tile_size, 1)
+                            k_indices = torch.arange(k_start, k_end, device=Q.device).unsqueeze(0)  # Shape: (1, k_tile_size)
+                            
+                            # Causal mask: mask positions where k_idx > q_idx
+                            causal_mask = k_indices > q_indices  # Shape: (q_tile_size, k_tile_size)
+                            
                             # Apply the mask
-                            S_ij = S_ij.masked_fill(inverted_causal_mask, -float('inf'))
+                            S_ij = S_ij.masked_fill(causal_mask, -1e9)
                         
                         # 2. Compute the new running maximum
                         # Compute the current row max
-                        m_new = S_ij.max(dim=-1).values
+                        m_ij = S_ij.max(dim=-1).values
 
                         # Update the running max
-                        m_i_new = torch.maximum(m_i, m_new)
+                        m_i_new = torch.maximum(m_i, m_ij)
 
                         # 3. Rescale the previous accumulators (o_i, l_i)
                         # Compute the scale factor
-                        scale_factor = torch.exp(m_i - m_i_new)
+                        scale_factor = torch.exp(m_i - m_i_new).to(Q.dtype)
 
                         # Update l_i and o_i
                         l_i_new = scale_factor * l_i
-                        o_i_new = scale_factor @ o_i
+                        o_i_new = scale_factor.reshape(-1, 1) * o_i
                         
                         # 4. Compute the probabilities for the current tile, P_tilde_ij = exp(S_ij - m_new).
-                        P_tilde_ij = torch.exp(S_ij - m_i_new.reshape(-1, 1))
+                        P_tilde_ij = torch.exp(S_ij - m_i_new.reshape(-1, 1)).to(Q.dtype)
 
                         # 5. Accumulate the current tile's contribution to the accumulators to update l_i and o_i
                         # Update l_i and o_i

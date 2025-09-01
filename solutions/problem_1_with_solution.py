@@ -11,7 +11,6 @@ class FlashAttention2Function(torch.autograd.Function):
     @staticmethod
     def forward(ctx, Q, K, V, is_causal=False):
         # Get dimensions from input tensors following the (B, H, N, D) convention
-        # (batch_size, num_heads, seq_length, d_model)
         B, H, N_Q, D_H = Q.shape
         _, _, N_K, _ = K.shape
 
@@ -23,8 +22,6 @@ class FlashAttention2Function(torch.autograd.Function):
         N_K_tiles = math.ceil(N_K / K_TILE_SIZE)
 
         # Initialize final output tensors
-        # O has shape (batch_size, num_heads, seq_length, d_model)
-        # L has shape (batch_size, num_heads, seq_length)
         O_final = torch.zeros_like(Q, dtype=Q.dtype)
         L_final = torch.zeros((B, H, N_Q), device=Q.device, dtype=torch.float32)
         
@@ -33,23 +30,17 @@ class FlashAttention2Function(torch.autograd.Function):
         # Main loops: Iterate over each batch and head
         for b in range(B):
             for h in range(H):
-                # Q_bh, K_bh, V_bh has shape (seq_length, d_model)
                 Q_bh = Q[b, h, :, :]
                 K_bh = K[b, h, :, :]
                 V_bh = V[b, h, :, :]
 
                 # Loop over query tiles
                 for i in range(N_Q_tiles):
-                    # q_start, q_end: start and end index of the current query tile
-                    # Q_tile has shape (tile_size, d_model)
                     q_start = i * Q_TILE_SIZE
                     q_end = min((i + 1) * Q_TILE_SIZE, N_Q)
                     Q_tile = Q_bh[q_start:q_end, :]
 
                     # Initialize accumulators for this query tile
-                    # o_i has shape (tile_size, d_model)
-                    # l_i has shape (tile_size)
-                    # m_i has shape (tile_size)
                     o_i = torch.zeros_like(Q_tile, dtype=Q.dtype)
                     l_i = torch.zeros(q_end - q_start, device=Q.device, dtype=torch.float32)
                     m_i = torch.full((q_end - q_start,), -float('inf'), device=Q.device, dtype=torch.float32)
@@ -59,40 +50,43 @@ class FlashAttention2Function(torch.autograd.Function):
                         k_start = j * K_TILE_SIZE
                         k_end = min((j + 1) * K_TILE_SIZE, N_K)
 
-                        # K_tile has shape (tile_size, d_model)
-                        # V_tile has shape (tile_size, d_model)
                         K_tile = K_bh[k_start:k_end, :]
                         V_tile = V_bh[k_start:k_end, :]
                         
-                        # S_ij has shape (tile_size, tile_size)
                         S_ij = (Q_tile @ K_tile.transpose(-1, -2)) * scale
                         
                         # --- STUDENT IMPLEMENTATION REQUIRED HERE ---
                         # 1. Apply causal masking if is_causal is True.
                         if is_causal:
-                            # Create causal mask with size (tile_size, tile_size)
-                            inverted_causal_mask = torch.triu(torch.ones(S_ij.shape[0], S_ij.shape[1]), diagonal=1).bool()
-
+                            # Create causal mask based on global positions
+                            # Query positions: [q_start, q_end)
+                            # Key positions: [k_start, k_end)
+                            q_indices = torch.arange(q_start, q_end, device=Q.device).unsqueeze(1)  # Shape: (q_tile_size, 1)
+                            k_indices = torch.arange(k_start, k_end, device=Q.device).unsqueeze(0)  # Shape: (1, k_tile_size)
+                            
+                            # Causal mask: mask positions where k_idx > q_idx
+                            causal_mask = k_indices > q_indices  # Shape: (q_tile_size, k_tile_size)
+                            
                             # Apply the mask
-                            S_ij = S_ij.masked_fill(inverted_causal_mask, -float('inf'))
+                            S_ij = S_ij.masked_fill(causal_mask, -1e9)
                         
                         # 2. Compute the new running maximum
                         # Compute the current row max
-                        m_new = S_ij.max(dim=-1).values
+                        m_ij = S_ij.max(dim=-1).values
 
                         # Update the running max
-                        m_i_new = torch.maximum(m_i, m_new)
+                        m_i_new = torch.maximum(m_i, m_ij)
 
                         # 3. Rescale the previous accumulators (o_i, l_i)
                         # Compute the scale factor
-                        scale_factor = torch.exp(m_i - m_i_new, dtype=Q.dtype)
+                        scale_factor = torch.exp(m_i - m_i_new).to(Q.dtype)
 
                         # Update l_i and o_i
                         l_i_new = scale_factor * l_i
-                        o_i_new = scale_factor @ o_i
+                        o_i_new = scale_factor.reshape(-1, 1) * o_i
                         
                         # 4. Compute the probabilities for the current tile, P_tilde_ij = exp(S_ij - m_new).
-                        P_tilde_ij = torch.exp(S_ij - m_i_new.reshape(-1, 1))
+                        P_tilde_ij = torch.exp(S_ij - m_i_new.reshape(-1, 1)).to(Q.dtype)
 
                         # 5. Accumulate the current tile's contribution to the accumulators to update l_i and o_i
                         # Update l_i and o_i
