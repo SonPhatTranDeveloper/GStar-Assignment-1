@@ -70,14 +70,14 @@ def _flash_attention_forward_kernel(
         # 2. Rescale the existing accumulator (`acc`) and denominator (`l_i`).
         scale_factor = tl.exp(m_i - m_i_new)
 
-        acc = acc * scale_factor[:, None]
+        acc = tl.reshape(scale_factor, (BLOCK_M, 1)) * acc
         l_i = scale_factor * l_i
 
         # 3. Compute the attention probabilities for the current tile (`p_ij`).
-        p_ij = tl.exp(s_ij - m_i_new.reshape(-1, 1))
+        p_ij = tl.exp(s_ij - tl.reshape(m_i_new, (BLOCK_M, 1)))
 
         # 4. Update the accumulator `acc` using `p_ij` and `v_block`.
-        acc = acc + tl.dot(p_ij, v_block)
+        acc = acc + tl.dot(p_ij, tl.cast(v_block, tl.float32))
 
         # 5. Update the denominator `l_i`.
         l_i = l_i + tl.sum(p_ij, axis=1)
@@ -85,7 +85,6 @@ def _flash_attention_forward_kernel(
         # 6. Update the running maximum `m_i` for the next iteration.
         m_i = m_i_new
         # --- END OF STUDENT IMPLEMENTATION ---
-
 
     # 5. Normalize the accumulator and write the output block.
     # This part is provided. It handles the final normalization and write-back.
@@ -97,7 +96,7 @@ def _flash_attention_forward_kernel(
              
     tl.store(o_ptrs, acc.to(O_ptr.dtype.element_ty), mask=q_offsets[:, None] < SEQ_LEN)
 
-def flash_attention_forward(q, k, v):
+def flash_attention_forward(q, k, v, **kwargs):
     """
     Minimal Python wrapper for the FlashAttention-2 forward pass.
     """
