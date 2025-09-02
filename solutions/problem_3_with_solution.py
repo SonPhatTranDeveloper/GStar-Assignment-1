@@ -42,8 +42,7 @@ def _flash_attention_forward_kernel(
     q_block = tl.load(q_ptrs, mask=q_offsets[:, None] < SEQ_LEN, other=0.0)
     
     # PyTorch softmax is exp(x), Triton is exp2(x * log2(e)), log2(e) is approx 1.44269504
-    # qk_scale = softmax_scale * 1.44269504
-    qk_scale = softmax_scale
+    qk_scale = softmax_scale * 1.44269504
 
     # 4. Main loop: Iterate over blocks of keys (K_j) and values (V_j).
     for start_n in range(0, SEQ_LEN, BLOCK_N):
@@ -70,13 +69,13 @@ def _flash_attention_forward_kernel(
         m_i_new = tl.maximum(m_i, m_i_)
 
         # 2. Rescale the existing accumulator (`acc`) and denominator (`l_i`).
-        scale_factor = tl.exp(m_i - m_i_new)
+        scale_factor = tl.exp2(m_i - m_i_new)
 
         acc = acc * scale_factor[:, None]
         l_i = scale_factor * l_i
 
         # 3. Compute the attention probabilities for the current tile (`p_ij`).
-        p_ij = tl.exp(s_ij - m_i_new[:, None])
+        p_ij = tl.exp2(s_ij - m_i_new[:, None])
 
         # 4. Update the accumulator `acc` using `p_ij` and `v_block`.
         acc = acc + tl.dot(p_ij, v_block)
