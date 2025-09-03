@@ -117,7 +117,7 @@ def _flash_attention_forward_causal_kernel(
         s_ij *= qk_scale
 
         # Apply the causal mask to S_ij.
-        s_ij = tl.where(k_offsets[None, :] >= q_offsets[:, None], s_ij, -float('inf'))
+        s_ij = tl.where(k_offsets[None, :] <= q_offsets[:, None], s_ij, -float('inf'))
 
         # Update the online softmax statistics (m_i, l_i) and the accumulator (acc).
         m_i_ = tl.max(s_ij, axis=1)
