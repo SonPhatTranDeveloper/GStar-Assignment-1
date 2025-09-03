@@ -142,7 +142,6 @@ def _flash_attention_forward_causal_kernel(
         m_i = m_i_new
         # --- END OF STUDENT IMPLEMENTATION ---
 
-
     # 4. Normalize and write the final output block.
     l_i_safe = l_i[:, None] + 1e-6
     acc = acc / l_i_safe
