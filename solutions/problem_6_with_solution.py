@@ -36,8 +36,7 @@ def _flash_attention_forward_swa_kernel(
     # 1. Calculate the number of query heads per group.
     # 2. Determine the correct kv_head_idx for the current q_head_idx.
     
-    n_q_heads_per_group = N_Q_HEADS // N_KV_HEADS
-    kv_head_idx = q_head_idx // n_q_heads_per_group
+    kv_head_idx = 0    # Placeholder: Replace with your GQA calculation
     # --- END OF GQA IMPLEMENTATION ---
 
 
@@ -60,80 +59,20 @@ def _flash_attention_forward_swa_kernel(
     # 1. Calculate the starting position of the attention window (window_start).
     # 2. Modify the range of the Phase 1 loop to start from your window_start.
 
-    diag_start = q_block_idx * BLOCK_M
-    window_start = tl.maximum(0, diag_start - WINDOW_SIZE)
+    window_start = 0 # Placeholder: Replace with your SWA calculation
 
     # --- Phase 1: Off-Diagonal Blocks (within the window) ---
     for start_n in range(window_start, q_block_idx * BLOCK_M, BLOCK_N):
-        # Load K_j
-        k_offsets = start_n + tl.arange(0, BLOCK_N)
-        k_ptrs = K_ptr + batch_idx * k_stride_b + kv_head_idx * k_stride_h + \
-                 (k_offsets[None, :] * k_stride_s + tl.arange(0, HEAD_DIM)[:, None])
-        k_block = tl.load(k_ptrs, mask=k_offsets[None, :] < SEQ_LEN, other=0.0)
-
-        # Load V_j
-        v_ptrs = V_ptr + batch_idx * v_stride_b + kv_head_idx * v_stride_h + \
-                 (k_offsets[:, None] * v_stride_s + tl.arange(0, HEAD_DIM)[None, :])
-        v_block = tl.load(v_ptrs, mask=k_offsets[:, None] < SEQ_LEN, other=0.0)
-        v_block = tl.cast(v_block, tl.float32)
-
-        # Compute S_ij and apply SWA masking (no future attention needed for off-diagonal)
-        s_ij = tl.dot(q_block, k_block)
-        s_ij *= qk_scale
-
-        delta = q_offsets[:, None] - k_offsets[None, :]
-        valid = delta < WINDOW_SIZE
-        s_ij = tl.where(valid, s_ij, -float('inf'))
-
-        # Online softmax update
-        m_i_ = tl.max(s_ij, axis=1)
-        m_i_new = tl.maximum(m_i, m_i_)
-
-        scale_factor = tl.exp2(m_i - m_i_new)
-        acc = acc * scale_factor[:, None]
-        l_i = scale_factor * l_i
-
-        p_ij = tl.exp2(s_ij - m_i_new[:, None])
-        acc = acc + tl.dot(p_ij, v_block)
-        l_i = l_i + tl.sum(p_ij, axis=1)
-        m_i = m_i_new
+        # STUDENT IMPLEMENTATION REQUIRED (Part 3: SWA Logic)
+        # Hint: You might need to apply the per-element sliding window mask to s_ij.
+        #    - A score is invalid if `(query_offset - key_offset) >= WINDOW_SIZE`.
+        pass
 
     # --- Phase 2: Diagonal Blocks ---
+    diag_start = q_block_idx * BLOCK_M
     for start_n in range(diag_start, (q_block_idx + 1) * BLOCK_M, BLOCK_N):
-        # Load K_j
-        k_offsets = start_n + tl.arange(0, BLOCK_N)
-        k_ptrs = K_ptr + batch_idx * k_stride_b + kv_head_idx * k_stride_h + \
-                 (k_offsets[None, :] * k_stride_s + tl.arange(0, HEAD_DIM)[:, None])
-        k_block = tl.load(k_ptrs, mask=k_offsets[None, :] < SEQ_LEN, other=0.0)
-
-        # Load V_j
-        v_ptrs = V_ptr + batch_idx * v_stride_b + kv_head_idx * v_stride_h + \
-                 (k_offsets[:, None] * v_stride_s + tl.arange(0, HEAD_DIM)[None, :])
-        v_block = tl.load(v_ptrs, mask=k_offsets[:, None] < SEQ_LEN, other=0.0)
-        v_block = tl.cast(v_block, tl.float32)
-
-        # Compute S_ij
-        s_ij = tl.dot(q_block, k_block)
-        s_ij *= qk_scale
-
-        # Apply causal and SWA masks
-        causal_valid = k_offsets[None, :] <= q_offsets[:, None]
-        delta = q_offsets[:, None] - k_offsets[None, :]
-        window_valid = delta < WINDOW_SIZE
-        s_ij = tl.where(causal_valid & window_valid, s_ij, -float('inf'))
-
-        # Online softmax update
-        m_i_ = tl.max(s_ij, axis=1)
-        m_i_new = tl.maximum(m_i, m_i_)
-
-        scale_factor = tl.exp2(m_i - m_i_new)
-        acc = acc * scale_factor[:, None]
-        l_i = scale_factor * l_i
-
-        p_ij = tl.exp2(s_ij - m_i_new[:, None])
-        acc = acc + tl.dot(p_ij, v_block)
-        l_i = l_i + tl.sum(p_ij, axis=1)
-        m_i = m_i_new
+        # STUDENT IMPLEMENTATION REQUIRED
+        pass
     # --- END OF SWA IMPLEMENTATION ---
 
 
